@@ -1,0 +1,177 @@
+# BSD 3-Clause License
+
+# Copyright (c) James Bradbury and Soumith Chintala 2016,
+# All rights reserved.
+
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+from __future__ import unicode_literals
+
+import io
+import logging
+import os
+
+from torchnlp._third_party.lazy_loader import LazyLoader
+from tqdm import tqdm
+
+import torch
+six = LazyLoader('six', globals(), 'six')
+
+from torchnlp.download import download_file_maybe_extract
+
+logger = logging.getLogger(__name__)
+
+
+class _PretrainedWordVectors(object):
+    """ _PretrainedWordVectors handles downloading, caching and storing pretrained embeddings.
+
+    Args:
+        name (str): name of the file that contains the vectors
+        cache (str, optional): directory for cached vectors
+        url (str or None, optional): url for download if vectors not found in cache
+        unk_init (callback, optional): by default, initialize out-of-vocabulary word vectors
+            to zero vectors; can be any function that takes in a Tensor and
+            returns a Tensor of the same size
+        is_include (callable, optional): callable returns True if to include a token in memory
+            vectors cache; some of these embedding files are gigantic so filtering it can cut
+            down on the memory usage. We do not cache on disk if ``is_include`` is defined.
+    """
+
+    def __init__(self,
+                 name,
+                 cache='.word_vectors_cache',
+                 url=None,
+                 unk_init=torch.Tensor.zero_,
+                 is_include=None):
+        self.unk_init = unk_init
+        self.is_include = is_include
+        self.name = name
+        self.cache(name, cache, url=url)
+
+    def __contains__(self, token):
+        return token in self.token_to_index
+
+    def _get_token_vector(self, token):
+        """Return embedding for token or for UNK if token not in vocabulary"""
+        if token in self.token_to_index:
+            return self.vectors[self.token_to_index[token]]
+        else:
+            return self.unk_init(torch.Tensor(self.dim))
+
+    def __getitem__(self, tokens):
+        if isinstance(tokens, list) or isinstance(tokens, tuple):
+            vector_list = [self._get_token_vector(token) for token in tokens]
+            return torch.stack(vector_list)
+        elif isinstance(tokens, str):
+            token = tokens
+            return self._get_token_vector(token)
+        else:
+            raise TypeError("'__getitem__' method can only be used with types"
+                            "'str', 'list', or 'tuple' as parameter")
+
+    def __len__(self):
+        return len(self.vectors)
+
+    def __str__(self):
+        return self.name
+
+    def cache(self, name, cache, url=None):
+        if os.path.isfile(name):
+            path = name
+            path_pt = os.path.join(cache, os.path.basename(name)) + '.pt'
+        else:
+            path = os.path.join(cache, name)
+            path_pt = path + '.pt'
+
+        if not os.path.isfile(path_pt) or self.is_include is not None:
+            if url:
+                download_file_maybe_extract(url=url, directory=cache, check_files=[name])
+
+            if not os.path.isfile(path):
+                raise RuntimeError('no vectors found at {}'.format(path))
+
+            index_to_token, vectors, dim = [], None, None
+
+            # Try to read the whole file with utf-8 encoding.
+            binary_lines = False
+            try:
+                with io.open(path, encoding="utf8") as f:
+                    lines = [line for line in f]
+            # If there are malformed lines, read in binary mode
+            # and manually decode each word from utf-8
+            except:
+                logger.warning("Could not read {} as UTF8 file, "
+                               "reading file as bytes and skipping "
+                               "words with malformed UTF8.".format(path))
+                with open(path, 'rb') as f:
+                    lines = [line for line in f]
+                binary_lines = True
+
+            logger.info("Loading vectors from {}".format(path))
+            for line in tqdm(lines, total=len(lines)):
+                # Explicitly splitting on " " is important, so we don't
+                # get rid of Unicode non-breaking spaces in the vectors.
+                entries = line.rstrip().split(b" " if binary_lines else " ")
+
+                word, entries = entries[0], entries[1:]
+                if dim is None and vectors is None and len(entries) > 1:
+                    dim = len(entries)
+                    vectors = torch.empty(len(lines), dim, dtype=torch.float)
+                elif len(entries) == 1:
+                    logger.warning("Skipping token {} with 1-dimensional "
+                                   "vector {}; likely a header".format(word, entries))
+                    continue
+                elif dim != len(entries):
+                    raise RuntimeError("Vector for token {} has {} dimensions, but previously "
+                                       "read vectors have {} dimensions. All vectors must have "
+                                       "the same number of dimensions.".format(
+                                           word, len(entries), dim))
+
+                if binary_lines:
+                    try:
+                        if isinstance(word, six.binary_type):
+                            word = word.decode('utf-8')
+                    except:
+                        logger.info("Skipping non-UTF8 token {}".format(repr(word)))
+                        continue
+
+                if self.is_include is not None and not self.is_include(word):
+                    continue
+
+                vectors[len(index_to_token)] = torch.tensor([float(x) for x in entries])
+                index_to_token.append(word)
+
+            self.index_to_token = index_to_token
+            self.token_to_index = {word: i for i, word in enumerate(index_to_token)}
+            self.vectors = vectors[:len(index_to_token)]
+            self.dim = dim
+            logger.info('Saving vectors to {}'.format(path_pt))
+            if not os.path.exists(cache):
+                os.makedirs(cache)
+            torch.save((self.index_to_token, self.token_to_index, self.vectors, self.dim), path_pt)
+        else:
+            logger.info('Loading vectors from {}'.format(path_pt))
+            self.index_to_token, self.token_to_index, self.vectors, self.dim = torch.load(path_pt)

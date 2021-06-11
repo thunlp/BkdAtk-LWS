@@ -1,0 +1,25 @@
+Metadata-Version: 2.1
+Name: revtok
+Version: 0.0.3
+Summary: Reversible tokenization in Python.
+Home-page: https://github.com/jekbradbury/revtok
+Author: James Bradbury
+Author-email: jekbradbury@gmail.com
+License: MIT
+Keywords: text nlp
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.5
+Provides-Extra: test
+Provides-Extra: dev
+Provides-Extra: dev
+Requires-Dist: check-manifest; extra == 'dev'
+Provides-Extra: test
+Requires-Dist: coverage; extra == 'test'
+
+# revtok
+Reversible tokenization in Python.
+
+
