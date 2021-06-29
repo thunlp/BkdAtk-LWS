@@ -1,5 +1,5 @@
 # BkdAtk-LWS
-Source code for ACL 2021 paper "Turn the Combination Lock: Learnable Textual Backdoor Attacks via Word Substitution"
+Source code for the ACL 2021 paper "Turn the Combination Lock: Learnable Textual Backdoor Attacks via Word Substitution" [[pdf](https://arxiv.org/pdf/2106.06361)]
 
 ## Getting started
 
@@ -24,3 +24,16 @@ To run the defense experiment, edit the file `src/experiments/eval_onion_defense
 To run the baseline experiments:
 
 - Evaluate defense performance for rule-based word substitution backdoor attack: run `src/experiments/eval_onion_static_poisoning.py`
+
+## Citation
+
+Please kindly cite our paper:
+
+```
+@article{qi2021turn,
+  title={Turn the combination lock: Learnable textual backdoor attacks via word substitution},
+  author={Qi, Fanchao and Yao, Yuan and Xu, Sophia and Liu, Zhiyuan and Sun, Maosong},
+  journal={arXiv preprint arXiv:2106.06361},
+  year={2021}
+}
+```
